@@ -3,87 +3,138 @@ package com.example.firebasetest;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.util.Log;
 import android.util.Patterns;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
 
-import androidx.activity.EdgeToEdge;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.example.firebasetest.MainActivity;
+import com.example.firebasetest.R;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.AuthResult;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.firebase.FirebaseFirestore;
+import com.google.firebase.firestore.FirebaseFirestore;
 
-public class LoginActivity  extends AppCompatActivity {
-    private EditText loginEd, passwordEd;
-    private Button signUp;
-    private FirebaseAuth firebaseAuth;
-    private String email, password;
+import java.util.HashMap;
+import java.util.Map;
+
+public class LoginActivity extends AppCompatActivity {
+    private EditText emailField, passwordField;
+    private Button loginButton, registerButton;
+    private FirebaseAuth mAuth;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.login_activity);
 
-        firebaseAuth = FirebaseAuth.getInstance();
-        FirebaseUser currentUser = firebaseAuth.getCurrentUser();
-        if(currentUser!=null){
-            startActivity(new Intent(LoginActivity.this, MainActivity.class));
-            finish();
+        mAuth = FirebaseAuth.getInstance();
+        emailField = findViewById(R.id.emailField);
+        passwordField = findViewById(R.id.passwordField);
+        loginButton = findViewById(R.id.loginButton);
+        registerButton = findViewById(R.id.registerButton);
+
+        loginButton.setOnClickListener(v -> loginUser());
+        registerButton.setOnClickListener(v -> registerUser());
+    }
+
+    private void loginUser() {
+        String email = emailField.getText().toString();
+        String password = passwordField.getText().toString();
+
+        mAuth.signInWithEmailAndPassword(email, password)
+                .addOnCompleteListener(this, task -> {
+                    if (task.isSuccessful()) {
+                        checkUserRole();
+                    } else {
+                        Toast.makeText(LoginActivity.this, "Ошибка авторизации", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private void registerUser() {
+        String email = emailField.getText().toString().trim();
+        String password = passwordField.getText().toString().trim();
+
+        if (email.isEmpty() || password.isEmpty()) {
+            Toast.makeText(this, "Заполните все поля", Toast.LENGTH_SHORT).show();
+            return;
         }
-        loginEd=findViewById(R.id.etEmail);
-        passwordEd =findViewById(R.id.etPassword);
-        signUp =findViewById(R.id.btnLogin);
 
-        signUp.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                validData();
-            }
-        });
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            Toast.makeText(this, "Неверный формат email", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (password.length() < 6) {
+            Toast.makeText(this, "Пароль должен содержать не менее 6 символов", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        mAuth.createUserWithEmailAndPassword(email, password)
+                .addOnCompleteListener(this, task -> {
+                    if (task.isSuccessful()) {
+                        Toast.makeText(LoginActivity.this, "Регистрация выполнена успешно", Toast.LENGTH_SHORT).show();
+                        saveUserToFirestore(email);
+                    } else {
+                        if (task.getException() != null) {
+                            String errorMessage = task.getException().getMessage();
+                            Toast.makeText(LoginActivity.this, "Ошибка: " + errorMessage, Toast.LENGTH_SHORT).show();
+                            Log.e("AuthError", "Ошибка регистрации", task.getException());
+                        }
+                    }
+                });
     }
 
-    private void validData(){
-        email = loginEd.getText().toString().trim();
-        password = passwordEd.getText().toString().trim();
+    private void saveUserToFirestore(String email) {
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        Map<String, Object> user = new HashMap<>();
+        user.put("email", email);
+        user.put("role", "user");
 
-        if(!Patterns.EMAIL_ADDRESS.matcher(email).matches()){
-            loginEd.setError("Неправильно введена почта");
-        } else if(TextUtils.isEmpty(password)){
-            passwordEd.setError("Пароль не должен быть пустым");
-        }else if(password.length()<5){
-            passwordEd.setError("Пароль должен содержать не менее 5 символов");
-        }else{
-            firebaseLogin();
+        db.collection("users")
+                .document(mAuth.getCurrentUser().getUid())
+                .set(user)
+                .addOnSuccessListener(aVoid -> {
+                    Toast.makeText(LoginActivity.this, "Данные пользователя сохранены", Toast.LENGTH_SHORT).show();
+                    startActivity(new Intent(LoginActivity.this, MainActivity.class));
+                    finish();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(LoginActivity.this, "Ошибка сохранения данных: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
+    }
+
+    private void checkUserRole() {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null) {
+            FirebaseFirestore db = FirebaseFirestore.getInstance();
+            db.collection("users").document(user.getUid()).get()
+                    .addOnSuccessListener(documentSnapshot -> {
+                        String role = documentSnapshot.getString("role");
+                        if (role != null) {
+                            switch (role) {
+                                case "admin":
+                                    startActivity(new Intent(LoginActivity.this, AdminActivity.class));
+                                    break;
+                                case "employee":
+                                    startActivity(new Intent(LoginActivity.this, EmployeeActivity.class));
+                                    break;
+                                case "user":
+                                    startActivity(new Intent(LoginActivity.this, UserActivity.class));
+                                    break;
+                            }
+                            finish();
+                        }
+                    });
         }
     }
-
-    private void firebaseLogin(){
-        firebaseAuth.signInWithEmailAndPassword(email,password).addOnSuccessListener(new OnSuccessListener<AuthResult>() {
-            @Override
-            public void onSuccess(AuthResult authResult) {
-                Toast.makeText(LoginActivity.this,"УСПЕШНО УАСЯ", Toast.LENGTH_SHORT).show();
-                startActivity(new Intent(LoginActivity.this,MainActivity.class));
-                finish();
-            }
-        }) .addOnFailureListener(new OnFailureListener() {
-            @Override
-            public void onFailure(@NonNull Exception e) {
-            Toast.makeText(LoginActivity.this,"Неуспешно не вошёл" + e.getMessage(), Toast.LENGTH_SHORT).show();
-            }
-        });
-    }
-
-    public void RegisterClick(){
-        startActivity(new Intent(this,RegisterActivity.class));
-    }
-
 }
-
-
